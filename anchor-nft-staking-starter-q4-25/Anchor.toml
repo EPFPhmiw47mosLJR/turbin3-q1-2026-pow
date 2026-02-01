@@ -6,7 +6,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-anchor_nft_staking_q4_25 = "YFbRgpLHGbKisGA8GYY1ToRH1tAD4ZRLaRvFwHYkoot"
+anchor_nft_staking_q4_25 = "6o6j6nuKeUomtECsTDTrHvaKFYDnFNKNc2vudWQhKp6a"
+
+[[test.genesis]]
+address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"  
+program = "tests/metaplex_program.so"
 
 [registry]
 url = "https://api.apr.dev"
