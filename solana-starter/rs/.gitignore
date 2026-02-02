@@ -1,3 +1,18 @@
-*wallet.json
-target
+# Rust/Anchor
+.anchor/
+.surfpool/
+**/*.rs.bk
+target/
+
+# Node/JS
+.yarn/
+coverage/
+node_modules/
+yarn-error.log
+
+# Other
 .DS_Store
+test-ledger/
+
+# Secrets / wallets
+*wallet.json

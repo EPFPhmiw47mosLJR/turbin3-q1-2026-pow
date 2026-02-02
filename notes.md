@@ -1,11 +1,141 @@
-# Week 1
+# Notes - Turbin3 Q1 2026
 
-## Accounts
+## Gotchas
+
+Tooling issues I ran into during the cohort.
+
+### DeclaredProgramIdMismatch
+
+- If you run into:
+
+    ```rust
+    Error: AnchorError occurred. Error Code: DeclaredProgramIdMismatch. Error Number: 4100. Error Message: The declared program id does not match the actual program id.
+    ```
+
+- This means the program ID declared in your code does not match the program ID Anchor is building or deploying.
+- **Solution (1):** Solve it the easy way. Run `anchor keys sync`.
+- **Solution (2):** Solve it manually:
+    1. You should have a keypair in `target/deploy/`. If not, generate one.
+    2. Generate keypair: `solana-keygen new --outfile target/deploy/<program_name>-keypair.json`
+    3. Get the public key: `solana-keygen pubkey target/deploy/<program_name>-keypair.json`
+    4. Update `declare_id!(<publickey_or_string_from_step_three>)` in `src/lib.rs`
+    5. Update `Anchor.toml`:
+
+        ```toml
+        [programs.localnet]
+        <program_name> = "<publickey_or_string_from_step_three>"
+        ```
+
+    6. Run `anchor build`
+    7. Profit!
+
+### Blockhash expired during tests
+
+- If running `surfpool start` + `anchor test --skip-local-validator` takes long enough that transactions fail with `Blockhash expired`, make sure the equivalent of `runbooks/deployment/main.tx` includes `instant_surfnet_deployment = true`:
+
+    ```tx
+    addon "svm" {
+        rpc_api_url = input.rpc_api_url
+        network_id = input.network_id
+    }
+
+    action "deploy_xyz" "svm::deploy_program" {
+        ...
+        // Optional: if you want to deploy the program via a cheatcode when targeting a Surfnet, set `instant_surfnet_deployment = true`
+        // Deploying via a cheatcode will write the program data directly to the program account, rather than sending transactions.
+        // This will make deployments instantaneous, but is deviating from how the deployments will take place on devnet/mainnet.
+        instant_surfnet_deployment = true
+    }
+    ```
+
+- Then run:
+
+    ```bash
+    surfpool start
+    anchor test --skip-local-validator --skip-deploy
+    ```
+
+- This prevents duplicate deployments. Surfpool already deploys the program, so Anchor does not need to send deployment transactions.
+
+### Stack offset exceeded (MPL)
+
+- If on running `anchor build`, `anchor test`, or any Anchor subcommand that builds the program, you get:
+
+    ```rust
+    Error: Function _ZN8mpl_core6hooked6plugin31registry_records_to_plugin_list17h3310a9c680a9eb8bE Stack offset of 4184 exceeded max offset of 4096 by 88 bytes, please minimize large stack variables. Estimated function frame size: 4224 bytes. Exceeding the maximum stack offset may cause undefined behavior during execution.
+    ```
+
+    or something of the form:
+
+    ```rust
+    Error: Function <some_function_name_here> Stack offset of <offset> exceeded max offset of <max_offset> by <overflow> bytes, please minimize large stack variables. Estimated function frame size: <frame_size> bytes. Exceeding the maximum stack offset may cause undefined behavior during execution.
+    ```
+
+- `<some_function_name_here>` is often something from MPL. (e.g. `_ZN8mpl_core6hooked6plugin31registry_records_to_plugin_list17h3310a9c680a9eb8bE`)
+- (1) If the function is from MPL, you likely have no control over this.
+  - You can safely ignore it for local testing.
+  - The program still builds and runs locally.
+  - Behavior on devnet/mainnet has not been verified.
+- (2) If the function is defined by you, reduce stack usage in that function (e.g. break it up, move large locals to the heap).
+
+### Unsupported Program ID
+
+- If a test/transaction fails with an error like:
+
+    ```rust
+         Simulation failed.
+    Message: Transaction simulation failed: Error processing Instruction <n>: Unsupported program id.
+    Logs:
+    [
+      "Program <program_id> invoke [1]",
+      "Program log: Instruction: <instruction_name>",
+      "Program <system_program_id> invoke [2]",
+      "Program <system_program_id> success",
+      "Program <program_id> consumed <compute_used> of <compute_limit> compute units",
+      "Program <program_id> failed: Unsupported program id"
+    ]
+    Catch the `SendTransactionError` and call `getLogs()` on it for full details.
+    ```
+
+- This means the instruction is being sent to a program ID that the runtime does not recognize (or support, in the current environment). In short, the program being called isn't in the current runtime.
+- In my case, the error is due to missing MPL Core program. Surfpool fetches Mainnet accounts just-in-time. Anchor uses Localnet via solana-test-validator, which doesn't have Mainnet accounts or access to Mainnet data, or interaction with live ecosystem protocols.
+- **Solution (1):** One way to fix this is to use `surfpool`
+    1. `surfpool start` (given you have a proper Crypto Infrastructure as Code setup)
+    2. `anchor test --skip-local-validator`
+    3. Profit?
+    4. If you run into  [Blockhash expired during test](#blockhash-expired-during-tests), see that or (2).
+- **Solution (2):** Another way to fix this is to:
+    1. Get the program file:
+
+        ```bash
+        solana program dump -u m CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d tests/metaplex_program.so
+        ```
+
+        - `-u m` = Dump from Mainnet
+        - `Co...7d` = Address of program
+        - `tests/metaplex_program.so` = File to dump it to
+    2. Append to `Anchor.toml`:
+
+        ```toml
+        [[test.genesis]]
+        address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d" # The program address
+        program = "tests/metaplex_program.so"                    # The path to program file
+        ```
+
+    3. Run `anchor test`
+    4. Profit!
+
+---
+
+## Week 1
+
+### Accounts
 
 - Everything on-chain is an account
 - Dynamically sized, can grow as required
 - Each and every account can only be created by the System Program
 - Account flags:
+
     | Flag       | Desc                    |
     |------------|-------------------------|
     | Writable   | Serial access           |
@@ -13,9 +143,9 @@
     | Signer     | A signer of transaction |
     | Executable | Program account         |
 
-### Account structure
+#### Account structure
 
-```
+```ts
 {
     key: PublicKey,         // ?
     lamports: number,       // ?
@@ -25,7 +155,7 @@
 }
 ```
 
-## Programs
+### Programs
 
 - Accounts marked as executable
 - `is_executable` is true
@@ -38,8 +168,8 @@
 - Programs are eBPF programs
 - User programs: Developed by users/devs
 
-
 > **CPI: Cross-Program Invocation**
+>
 > - It lets a program:
 >   - invoke an instruction in another program
 >   - pass accounts + data to it
@@ -47,17 +177,17 @@
 > - Solana's equivalent of a smart contract calling another contract.
 > - CPI is the only sanctioned way for programs to interact.
 
-## Rent
+### Rent
 
 - **Rent is for data stored on chain**
 - Rent must be paid to create Accounts on-chain
 - Pay 2 years rent upfront for Rent-Exemption
-- * At the end of each Epoch, a GC runs which collects rent
+- - At the end of each Epoch, a GC runs which collects rent
 - Closing an Account allows rent to be reclaimed
 - Resizing an Account costs/returns the difference
 - Upgradeable programs require 4 years of rent upfront
 
-## Transactions
+### Transactions
 
 - Accounts: Reference all accounts you're going to deal with
 - Composition: One or more instructions
@@ -66,11 +196,11 @@
 
 > Parallel execution of transactions only if they reference different accounts
 
-### Structure of Transaction
+#### Structure of Transaction
 
 - Multiple messages in a transaction
 
-```
+```ts
 {
     message: {
         instructions: Array<instructions>,
@@ -81,35 +211,41 @@
 }
 ```
 
-## Compute (Compute Units)
+### Compute (Compute Units)
 
 - **CU is for work down**
 - Everything done on chain (instructions etc) require compute units. Ex:
-    - Executing a transfer
-    - Executing account creation
-    - Executing a sys call
+  - Executing a transfer
+  - Executing account creation
+  - Executing a sys call
 - By default:
-    - Each instruction is allocated 200,000 CUs
-    - Each transaction is allocated 1.4M CUs
-    - Each block is allocated 60M CUs
+  - Each instruction is allocated 200,000 CUs
+  - Each transaction is allocated 1.4M CUs
+  - Each block is allocated 60M CUs
 - Block Limit: Fixed limit of maximum compute units per block
 - Base fee: Paid on instructions (5000 lamports)
-    - 50% is burned (taken out of circulating SOL supply)
-    - 50% is paid to validator which processed the transaction
+  - 50% is burned (taken out of circulating SOL supply)
+  - 50% is paid to validator which processed the transaction
 - Prioritization fee: Optional fee used to increase the chance validator will process your transaction
-    - 100% is paid to validator
+  - 100% is paid to validator
+
+    ```math
+    \begin{aligned}
+        \text{Prioritization fee} &= \text{CU limit} \cdot \text{CU price} \\
+        \text{Priority} &= \frac{\text{Prioritization fee} + \text{Base fee}}{1 + \text{CU limit} + \text{Signature CUs} + \text{Write lock CUs}}
+    \end{aligned}
     ```
-    Prioritization fee = CU limit * CU price
-    Priority = (Prioritization fee + Base fee) / (1 + CU limit + Signature CUs + Write lock CUs)
-    ```
+
 - Best for the chain: Least amount of CUs
 
 > Can be talked as:
+>
 > - How much work does the validator have to do computing what you send it to give an output?
 > - This is broken into units that dictate cost and control size.
 > - Speed of transaction and assurance of inclusion into a block are affected by this.
 
 > Solana intentionally decoupled:
+>
 > - execution cost
 > - user fees
 > Basic Transaction Fee is 5000 lamports, it pays for signature verification + propagation + basic spam resistance.
@@ -124,31 +260,30 @@
 >   - A tx using 200k CU with a non-zero CU price *gets included*
 > Validators maximize lamports per compute unit.
 
-
-
-## PDA
+### PDA
 
 - Made up of seeds and a bump
-    - seeds: byte strings
-    - bump: program ID/smart contract's address
+  - seeds: byte strings
+  - bump: program ID/smart contract's address
 - Special PDAs:
-    - Associated Token Account
+  - Associated Token Account
 - Deterministic if seeds are fixed
 - Can't collide with other PDAs/Accounts created by other programs (program id used in derivation)
 - Can be used as data storage (hashmap: key/value)
 - If Solana program needs state -> PDAs are used
 - PDA Account pubkeys resemble accounts but no private key
-    - Hash of the seeds you provide
+  - Hash of the seeds you provide
 - Can authorize/sign on program's behalf
 
 > **PDA: Program Derived Address**
+>
 > - An address deterministically derived from:
 >   - one or more seeds (byte strings), and
 >   - a program ID (the smart contract's address)
 > - The Solana runtime guarantees that the resulting address is off the Ed25519 curve, which means: **No private key exists for it.**
 > - So only the program that derived it can authorize actions on it.
 
-## IDL: Interface Design Language
+### IDL: Interface Design Language
 
 - Interface Design Language/Interface Description Language/Interface Definition Language
 - Many on-chain programs have an IDL
@@ -157,15 +292,15 @@
 - Extra PDA may be used to store IDL
 - IDLs are written in JSON
 
-
-## SPL Token
+### SPL Token
 
 - To create a new SPL Token, you must first create the Mint Account
 - Key arguments when creating an SPL Token:
-    - Mint Authority
-    - Freeze Authority
-    - Decimals
+  - Mint Authority
+  - Freeze Authority
+  - Decimals
 - Helper functions/instructions:
+
     | Function            | Description                                         |
     |---------------------|-----------------------------------------------------|
     | `initializeMint`    | Creates a new token mint instance                   |
@@ -178,34 +313,35 @@
     | `freezeAccount`     | Prevent the token account from acting               |
     | `thawAccount`       | Removes freeze                                      |
     | `syncNative`        | Wraps native SOL                                    |
+
 - Once a Mint Account has been created, we can create Token Accounts for it
 - Token Accounts:
-    - Keep track of token balance
-    - Linked to a single mint account
+  - Keep track of token balance
+  - Linked to a single mint account
 
-## ATA: Associated Token Account
+### ATA: Associated Token Account
 
 - One of the most used PDAs on Solana
 - Creates a deterministic token account
 - Other people can create token accounts for you
 - Associated Token Account - special PDA:
-    - Associated with your wallet
-    - Associated with the mint account of the token itself
-    - Completely unique per token
+  - Associated with your wallet
+  - Associated with the mint account of the token itself
+  - Completely unique per token
 - TS library provides helpers to create ATA:
-    - `getAssociatedTokenAddress`
-    - `createAssociatedTokenAccount`
-    - `getOrCreateAssociatedTokenAccount`
+  - `getAssociatedTokenAddress`
+  - `createAssociatedTokenAccount`
+  - `getOrCreateAssociatedTokenAccount`
 
-## Metaplex
+### Metaplex
 
 - Initially started as Solana Labs initiative
 - Goal: create an open NFT protocol and tools to support it on Solana chain
-    - The Metaplex Metadata Standard
-    - CandyMachine
-    - Compressed NFTs
+  - The Metaplex Metadata Standard
+  - CandyMachine
+  - Compressed NFTs
 
-## Metaplex Token Standard
+### Metaplex Token Standard
 
 | Standard                | Description                                      |
 |-------------------------|--------------------------------------------------|
@@ -228,25 +364,26 @@
 
 - Depending on the type of Token, different JSON standard needs to be used: <https://developers.metaplex.com/smart-contracts/token-metadata/token-standard>
 
-### Master Edition
+#### Master Edition
 
 - Proof that token is non fungible
-    - Verifies mint account has 0 decimal
-    - Verifies only 1 token has been minted
+  - Verifies mint account has 0 decimal
+  - Verifies only 1 token has been minted
 - Transfers the mint authority and freeze authority to the Master Edition
 - You can set max supply
-    - If > 1, use Master Edition to mint sub editions of an NFT
+  - If > 1, use Master Edition to mint sub editions of an NFT
 - Data:
-    - supply
-    - max supply
+  - supply
+  - max supply
 - PDA Seeds
-    - "metadata" (literal namespace string)
-    - Metadata
-    - Program ID
-    - Mint ID
-    - "edition"
-    - Conceptually: `PDA = hash("metadata", METADATA_PROGRAM_ID, MINT_PUBLIC_KEY, "edition")`
+  - "metadata" (literal namespace string)
+  - Metadata
+  - Program ID
+  - Mint ID
+  - "edition"
+  - Conceptually: `PDA = hash("metadata", METADATA_PROGRAM_ID, MINT_PUBLIC_KEY, "edition")`
 - Parameters
+
     | Parameter       | Description |
     |-----------------|-------------|
     | edition         | PublicKey   |
@@ -258,14 +395,14 @@
     | tokenProgram?   | PublicKey   |
     | systemProgram?  | PublicKey   |
 
-
-## Metadata Account
+### Metadata Account
 
 - Can be set to mutable
 - Creators array can be to obtain royalties (on Marketplaces)
 - Creators must sign with their own key to be verified
 - Collection NFTs can be used to group NFTs
 - Parameters need to create this:
+
     | Parameter       | Description |
     |-----------------|-------------|
     | metadata        | PublicKey   |
@@ -275,27 +412,26 @@
     | updateAuthority | PublicKey   |
     | systemProgram?  | PublicKey   |
 
-
-## Metadata
+### Metadata
 
 - Data
-    - name
-    - symbol
-    - uri
-    - seller_fee_basis_points (ex: 500 = 5%)
-    - creators
-    - collection
-    - uses
+  - name
+  - symbol
+  - uri
+  - seller_fee_basis_points (ex: 500 = 5%)
+  - creators
+  - collection
+  - uses
 - Other arguments
-    - isMutable
-    - collectionDetails
+  - isMutable
+  - collectionDetails
 - PDA Seeds
-    - "metadata" (literal namespace string)
-    - Metadata Program ID (Authority which owns the derived account)
-    - Mint ID
-    - Conceptually: `PDA = hash("metadata", METADATA_PROGRAM_ID, MINT_PUBLIC_KEY)`
+  - "metadata" (literal namespace string)
+  - Metadata Program ID (Authority which owns the derived account)
+  - Mint ID
+  - Conceptually: `PDA = hash("metadata", METADATA_PROGRAM_ID, MINT_PUBLIC_KEY)`
 
-## Token Extensions (SPL Token 2022)
+### Token Extensions (SPL Token 2022)
 
 - Implemented at the token program level, not a separate metadata program
 - Extensions are opt-in at mint creation time
@@ -303,7 +439,7 @@
 - Rules apply universally across wallets, programs, and marketplaces
 - Extensions cannot be bypassed by clients
 
-### Common Extensions
+#### Common Extensions
 
 | Extension              | Description                                               |
 |------------------------|-----------------------------------------------------------|
@@ -317,62 +453,62 @@
 | Confidential Transfers | Balances and transfer amounts are encrypted               |
 | Mint Close Authority   | Allows mint account to be closed when supply reaches zero |
 
-## Collections
+### Collections
 
 - Collections are just NFTs
-    - You create a Collection NFT by setting the CollectionDetails object.
-    - To add a NFT to a collection set the Collection field on the Metadata account.
+  - You create a Collection NFT by setting the CollectionDetails object.
+  - To add a NFT to a collection set the Collection field on the Metadata account.
 - A Collection allows a authority to verify or unverify.
 - Can be nested.
 - Collections should now be SIZED; Sized collections allow you to set the number of NFTs in the collection once, and from then on it grows on-chain
 
-## UMI
+### UMI
 
 - Modular framework that can be used for creating javascript clients for Solana programs
 - <https://github.com/Web3-Builders-Alliance/cohort-helper/tree/main/BonusResources/umi>
 
-## Task (Solana-Starter)
+### Task (Solana-Starter)
 
-### Create a fungible token
+#### Create a fungible token
 
 - (1) `spl_init.ts`
-    - Create a new token mint
-    - Make your devnet wallet the mint authority
-    - Set decimals to 6
-    - Console log the mint ID
+  - Create a new token mint
+  - Make your devnet wallet the mint authority
+  - Set decimals to 6
+  - Console log the mint ID
 - (1) `spl_mint.ts`
-    - Use `getOrCreateAssociatedTokenAccount` to create a token account using your wallet and the mint ID
-    - Use `mintTo` to mint tokens to yourself
+  - Use `getOrCreateAssociatedTokenAccount` to create a token account using your wallet and the mint ID
+  - Use `mintTo` to mint tokens to yourself
 - (2) `spl_metadata.ts`
-    - Use `findProgramAddressSync` to get PDA for the Metadata for your Mint.
-    - Create a new transaction
-        - Add a `createCreateMetadataAccountV3Instruction` to it
-        - Add the required accounts and data
-        - Use `sendAndConfirmTransaction` to send it to Devnet
+  - Use `findProgramAddressSync` to get PDA for the Metadata for your Mint.
+  - Create a new transaction
+    - Add a `createCreateMetadataAccountV3Instruction` to it
+    - Add the required accounts and data
+    - Use `sendAndConfirmTransaction` to send it to Devnet
 - (2) `spl_transfer.ts`
-    - Transfer tokens to another cadet
-    - Use `getOrCreateAssociatedTokenAccount` to get the tokens account
+  - Transfer tokens to another cadet
+  - Use `getOrCreateAssociatedTokenAccount` to get the tokens account
 - (3) `nft_image.ts`
-	- Read the generated rug image from disk
-	- Convert the image buffer into a `GenericFile`
-	- Upload the file to Irys (devnet)
-	- Console log the image URI
+  - Read the generated rug image from disk
+  - Convert the image buffer into a `GenericFile`
+  - Upload the file to Irys (devnet)
+  - Console log the image URI
 - (3) `nft_metadata.ts`
-	- Create NFT metadata following the Metaplex JSON schema
-	- Reference the uploaded image URI
-	- Upload the metadata JSON to Irys
-	- Console log the metadata URI
+  - Create NFT metadata following the Metaplex JSON schema
+  - Reference the uploaded image URI
+  - Upload the metadata JSON to Irys
+  - Console log the metadata URI
 - (3) `nft_mint.ts`
-	- Generate a new mint keypair
-	- Use `createNft` to mint an NFT
-        - Set name, symbol, and metadata URI
-        - Set seller fee basis points
-	- Send and confirm the transaction on devnet
-	- Console log the transaction URL and mint address
+  - Generate a new mint keypair
+  - Use `createNft` to mint an NFT
+  - Set name, symbol, and metadata URI
+  - Set seller fee basis points
+  - Send and confirm the transaction on devnet
+  - Console log the transaction URL and mint address
 
-# Week 2
+## Week 2
 
-## Vault
+### Vault
 
 - Trust the chain to verify your wallet with cryptographic signatures so only you can access it
 - Instructions:
@@ -381,7 +517,7 @@
     3. Withdraw funds
     4. Close the vault
 
-## Task
+### Task
 
 - `anchor keys sync` generates a set of keypair in `./target/deploy/<name>-keypair.json` if it doesn't exist AND updates the `declare_id!`
 - `solana-keygen pubkey <keypair>.json` gets the corresponding public key
@@ -410,7 +546,7 @@ declare_id!("2u5cG7PEVL5KdTRMWSjdwqtBVv1anE5Hvv4FGSPZVRUN");
  * - handles instruction dispatch
  * - enforces account constraints
  */
-#[program]
+##[program]
 pub mod anchor_vault_q4_25 {
     use super::*;
 
@@ -449,7 +585,7 @@ pub mod anchor_vault_q4_25 {
  * system_program:
  *      - Program used to {create accounts, transfer lamports}
 */
-#[derive(Accounts)] 
+##[derive(Accounts)] 
 pub struct Initialize<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
@@ -507,7 +643,7 @@ impl<'info> Initialize<'info> {
 /**
  * TODO
  */
-#[derive(Accounts)]
+##[derive(Accounts)]
 pub struct Deposit<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
@@ -547,10 +683,15 @@ impl<'info> Deposit<'info> {
  * vault_bump is unsigned 8 bit
  * state_bump is unsigned 8 bit
  */
-#[derive(InitSpace)]
-#[account]
+##[derive(InitSpace)]
+##[account]
 pub struct VaultState {
     pub vault_bump: u8,
     pub state_bump: u8,
 }
 ```
+
+## TODO
+
+<!-- MathJax loader for non-MatchJax supporting renderers. -->
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
