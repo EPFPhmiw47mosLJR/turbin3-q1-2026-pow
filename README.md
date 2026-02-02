@@ -4,6 +4,7 @@ Turbin3 Async Builder Q1
 
 ## Structure
 
+- [Notes](/notes.md)
 - Week 1
   - Assignment 1: [Solana Starter](/solana-starter)
 - Week 2
