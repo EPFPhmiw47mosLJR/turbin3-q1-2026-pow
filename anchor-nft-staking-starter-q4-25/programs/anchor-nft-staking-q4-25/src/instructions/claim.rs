@@ -62,7 +62,8 @@ impl<'info> Claim<'info> {
             signer_seeds,
         );
 
-        let reward_points = self.user_account.points as u64;
+        let reward_points = (self.user_account.points as u64)
+            .saturating_mul(10u64.pow(self.reward_mint.decimals as u32));
 
         mint_to(cpi_ctx, reward_points)?;
 
