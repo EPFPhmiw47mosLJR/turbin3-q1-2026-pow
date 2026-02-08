@@ -4,24 +4,27 @@ use anchor_spl::{
     token::{Mint, Token, TokenAccount},
 };
 
-use crate::state::Config;
+use crate::{errors::AmmError, state::Config};
 
 #[derive(Accounts)]
 #[instruction(seed: u64)]
 pub struct Initialize<'info> {
     #[account(mut)]
     pub initializer: Signer<'info>,
+
     pub mint_x: Account<'info, Mint>,
     pub mint_y: Account<'info, Mint>,
+
     #[account(
         init,
         payer = initializer,
         seeds = [b"lp", config.key.as_ref()],
         bump,
-        mint::decimals = 6,
+        mint::decimals = mint_x.decimals,
         mint::authority = config,
     )]
     pub mint_lp: Account<'info, Mint>,
+
     #[account(
         init,
         payer = initializer,
@@ -36,6 +39,7 @@ pub struct Initialize<'info> {
         associated_token::authority = config,
     )]
     pub vault_y: Account<'info, TokenAccount>,
+
     #[account(
         init,
         payer = initializer,
@@ -44,6 +48,7 @@ pub struct Initialize<'info> {
         space = Config::DISCRIMINATOR.len() + Config::INIT_SPACE,
     )]
     pub config: Account<'info, Config>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -57,6 +62,15 @@ impl<'info> Initialize<'info> {
         authority: Option<Pubkey>,
         bumps: InitializeBumps,
     ) -> Result<()> {
+        // Won't hit this because anchor will attempt to create two identical ATAs before this and fail
+        // require!(self.mint_x.key() != self.mint_y.key(), AmmError::InvalidToken);
+        require!(fee <= 10_000, AmmError::InvalidFee);
+        require!(
+            self.mint_x.decimals == self.mint_y.decimals,
+            AmmError::InvalidPrecision
+        );
+        require!(authority.is_some(), AmmError::NoAuthoritySet);
+
         self.config.set_inner(Config {
             seed,
             authority,

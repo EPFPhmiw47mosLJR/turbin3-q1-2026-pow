@@ -11,8 +11,10 @@ use crate::{errors::AmmError, state::Config};
 pub struct Deposit<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
+
     pub mint_x: Account<'info, Mint>,
     pub mint_y: Account<'info, Mint>,
+
     #[account(
         has_one = mint_x,
         has_one = mint_y,
@@ -20,12 +22,15 @@ pub struct Deposit<'info> {
         bump = config.config_bump,
     )]
     pub config: Account<'info, Config>,
+
     #[account(
         mut,
         seeds = [b"lp", config.key().as_ref()],
         bump = config.lp_bump,
+        mint::authority = config,
     )]
     pub mint_lp: Account<'info, Mint>,
+
     #[account(
         mut,
         associated_token::mint = mint_x,
@@ -38,6 +43,7 @@ pub struct Deposit<'info> {
         associated_token::authority = config,
     )]
     pub vault_y: Account<'info, TokenAccount>,
+
     #[account(
         mut,
         associated_token::mint = mint_x,
@@ -50,6 +56,7 @@ pub struct Deposit<'info> {
         associated_token::authority = user,
     )]
     pub user_y: Account<'info, TokenAccount>,
+
     #[account(
         init_if_needed,
         payer = user,
@@ -57,6 +64,7 @@ pub struct Deposit<'info> {
         associated_token::authority = user,
     )]
     pub user_lp: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -70,24 +78,61 @@ impl<'info> Deposit<'info> {
         max_y: u64,  // Maximum amount of token Y that the user is willing to deposit
     ) -> Result<()> {
         require!(self.config.locked == false, AmmError::PoolLocked);
-        require!(amount != 0, AmmError::InvalidAmount);
+        require!(
+            self.mint_lp.supply == 0 || amount != 0,
+            AmmError::InvalidAmount
+        );
+        require!(
+            max_x <= self.user_x.amount && max_y <= self.user_y.amount,
+            AmmError::InsufficientBalance
+        );
+        require!(!self.vault_x.is_frozen(), AmmError::AccountFrozen);
+        require!(!self.vault_y.is_frozen(), AmmError::AccountFrozen);
 
-        let (x, y) = match self.mint_lp.supply == 0
-            && self.vault_x.amount == 0
-            && self.vault_y.amount == 0
-        {
+        let vault_empty =
+            self.mint_lp.supply == 0 && self.vault_x.amount == 0 && self.vault_y.amount == 0;
+
+        let (x, y) = match vault_empty {
             true => (max_x, max_y),
             false => {
-                let amounts = ConstantProduct::xy_deposit_amounts_from_l(
+                // Not sure if this is correct (Init)
+                let mut cp = ConstantProduct::init(
                     self.vault_x.amount,
                     self.vault_y.amount,
                     self.mint_lp.supply,
-                    amount,
-                    6,
+                    self.config.fee,
+                    Some(self.mint_x.decimals),
                 )
-                .unwrap();
-                (amounts.x, amounts.y)
+                .map_err(AmmError::from)?;
+                let res = cp
+                    .deposit_liquidity(amount, max_x, max_y)
+                    .map_err(AmmError::from)?;
+                (res.deposit_x, res.deposit_y)
+
+                // or this (standalone)
+                // let res = ConstantProduct::xy_deposit_amounts_from_l(
+                //     self.vault_x.amount,
+                //     self.vault_y.amount,
+                //     amount,
+                //     self.config.fee as u64,
+                //     self.mint_x.decimals as u32,
+                // )
+                // .map_err(AmmError::from)?;
+                // (res.x, res.y)
             }
+        };
+
+        // Taking idea from https://app.uniswap.org/whitepaper.pdf
+        // i.e., s_minted = sqrt(x_deposited * y_deposited)
+        // Note: Rust std impl of isqrt does not touch float
+        // https://github.com/rust-lang/rust/blob/1.89.0/library/core/src/num/int_sqrt.rs
+        let lp_to_mint = if vault_empty {
+            let prod = (x as u128)
+                .checked_mul(y as u128)
+                .ok_or(AmmError::Overflow)?;
+            prod.isqrt() as u64
+        } else {
+            amount
         };
 
         require!(x <= max_x && y <= max_y, AmmError::SlippageExceeded);
@@ -97,7 +142,7 @@ impl<'info> Deposit<'info> {
         // deposit token y
         self.deposit_tokens(false, y)?;
         // mint lp tokens
-        self.mint_lp_tokens(amount)
+        self.mint_lp_tokens(lp_to_mint)
     }
 
     pub fn deposit_tokens(&self, is_x: bool, amount: u64) -> Result<()> {

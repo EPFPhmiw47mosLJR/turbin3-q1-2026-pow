@@ -39,6 +39,8 @@ pub enum AmmError {
     InsufficientBalance,
     #[msg("Zero balance.")]
     ZeroBalance,
+    #[msg("Account is frozen.")]
+    AccountFrozen,
 }
 
 impl From<CurveError> for AmmError {

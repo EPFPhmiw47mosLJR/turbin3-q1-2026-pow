@@ -5,7 +5,7 @@ mod instructions;
 mod state;
 
 use instructions::*;
-declare_id!("9FVkz5L9LZix4zXYmqJLzKBwRpm9aJ539J26UsZSrLWN");
+declare_id!("2jzYX8rEXaRzvkoTn5psGi4mT5vudHzFoNQFPD7seV6W");
 
 #[program]
 pub mod anchor_amm_q4_25 {
