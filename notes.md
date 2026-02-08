@@ -693,5 +693,114 @@ pub struct VaultState {
 
 ## TODO
 
+## Week 3
+
+### Automated Market Makers (AMM)
+
+- **What:** Entities that actively buy and sell securities or assets at publicly quoted prices, providing liquidity to the market.
+- **Key Role:** Facilitate trading by ensuring there is always someone buying or selling (even when supply and demand are imbalanced).
+- **Inventory Management:** Strategically manage their inventory to balance risk and potential profit.
+
+- They make money via **Buy-ask spread:** Difference between the price they buy at (bid) and sell at (ask)
+
+#### Liquidity Pool Token (LP Token)
+
+- Invidividuals or entities deposit their assets into liquidity pools.
+- LPs earn a share of trading fees as a reward for providing liquidity.
+- Required to deposit two tokens:
+    - X token
+    - Y token
+- Received LP token represents their portion of the pool.
+- It is nominal, not notional.
+    - Nominal: Face amount or count of tokens held
+    - Notional: Economic value or underlying exposure represented by the position.
+    - Ex:
+        - Hold 10 LP tokens, total supply is 1000 tokens.
+            - Nominal share = 1% of the pool
+        - Pool Total Value Locked = $10,000,000
+            - Notional exposure = $100,000
+
+#### Constant Product Automated Market Maker (CPMM)
+
+- Formula: $k = xy$
+- Example:
+    1. When someone sells token A, AMM buys these and gives them token B
+    2. This lowers token B and increases token A
+    3. Increases price B, lowers price A
+- Example:
+    1. k = 600; X: 20, Y: 30
+    2. Swap Order: SWAP 5 X
+        - $$X_2 = 20 + 5 = 25$$
+        - $$Y_2 = 600 / 25 = 24$$
+        - Y change $$= 30 - 24 = 6$$
+        - Result: $$6 Y$$ for $$5 X$$
+    3. Swap Order: SWAP 5 X
+        - $$X_2 = 25 + 5 = 30$$
+        - $$Y_2 = 600 / 30 = 20$$
+        - Y change $$= 24 - 20 = 4$$
+        - Result: $$4 Y$$ for $$5 X$$
+
+#### AMM Arbitrage (AMM Arb)
+
+- **Price Difference:** The CPMM values A at 0.59 B. Other markets might still value it closer to the original price of 1 B per A.
+- **Buy Low, Sell High:** Arbitrageur's can buy A cheaply from the CPMM at 0.59 B and sell it on another exchange for closer to 1 B.
+- **Important points to consider:**
+    1. Fees
+    2. Gas
+
+#### Impermanent Loss (IL) or Divergent Loss
+
+- **Impermanent Loss:** The constant rebalancing to maintain $$k$$ can lead to LPs having a different ratio of assets than they initially deposited, potentially resulting in a loss compared to simply holding the tokens.
+- **Fees as Compensation:** LPs earn trading fees on each swap, which helps offset the risk of impermanent loss.
+- **Divergent Loss:**
+    1. Negative gamma
+    2. Rho or rates
+
+### Order Flow
+
+- **Two** main types of Order Flow:
+    1. Informed: Driven by traders with privileged information, potentially impacting market prices.
+    2. Uninformed: Based on publicly available infromation and sentiment, less likely to significantly impact prices.
+
+- **Two** types of **Uninformed Flow**:
+    1. Non-Toxic: Patient, long term trades by long-term investors, contributing to a healthy market.
+    2. Toxic: Aggressive, high-frequency trading that creates artificial volatility and can harm market quality.
+
+### Types of AMM
+
+- Invariant: $$A n^n \sum x_i + D = A n^n D + \frac{D^{n+1}}{n^n \prod{x_i}}$$
+- Concentrated Liquidty AMM (CLMM):
+    - Invariant for tick range
+    - Can be sum or product
+- Hybrid CPMMs (e.g., Curve Finance)
+- Function-maximizing AMMs (fmAMMs)
+    - CoW Swap: Batch Auctions with Solver Intents
+
+### Program and ProgramData
+
+- `ProgramData` stores the deployment slot ID and the address of the upgrade authority.
+
+```rust
+// Refers to the program itself, AnchorMplxcoreQ425 is the program
+pub this_program: Program<'info, AnchorMplxcoreQ425>,
+// Refers to the program data
+pub program_data: Account<'info, ProgramData>
+```
+
+This allows for checks like:
+1. The program_data account passed in is actually associated with the program.
+2. The instruction is authorized by the program's upgrade authority
+```rust
+#[account(
+    constraint = this_program.programdata_address()? == Some(program_data.key())
+)]
+pub this_program: Program<'info, AnchorMplxcoreQ425>,
+#[account(
+    constraint = program_data.upgrade_authority_address == Some(payer.key()) @ MPLXCoreError::NotAuthorized
+)]
+pub program_data: Account<'info, ProgramData>,
+```
+
+
 <!-- MathJax loader for non-MatchJax supporting renderers. -->
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
