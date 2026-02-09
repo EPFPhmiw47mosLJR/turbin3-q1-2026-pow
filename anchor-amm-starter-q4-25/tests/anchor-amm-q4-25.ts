@@ -1,4 +1,3 @@
-import type { Program } from "@coral-xyz/anchor";
 import * as anchor from "@coral-xyz/anchor";
 import {
 	ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -32,7 +31,8 @@ describe("anchor-amm-q4-25", () => {
 	const provider = anchor.AnchorProvider.env();
 	anchor.setProvider(provider);
 
-	const program = anchor.workspace.anchorAmmQ425 as Program<AnchorAmmQ425>;
+	const program = anchor.workspace
+		.anchorAmmQ425 as anchor.Program<AnchorAmmQ425>;
 
 	// Accounts
 	const initializer = provider.wallet;
@@ -1153,7 +1153,7 @@ describe("anchor-amm-q4-25", () => {
 				provider: provider,
 				mint: mintX,
 				owner: initializer.publicKey,
-				amount: 1,
+				amount: 1n,
 				allowOwnerOffCurve: false,
 			});
 			// Setup actual pool
@@ -1434,9 +1434,10 @@ describe("anchor-amm-q4-25", () => {
 					.rpc();
 				expect.fail("should have failed");
 			} catch (e) {
-				expect(e.toString()).to.include(
-					"An account required by the instruction is missing",
-				);
+				expect(e.error.errorCode).to.deep.eq({
+					code: "ConstraintTokenOwner",
+					number: 2015,
+				});
 			}
 		});
 
