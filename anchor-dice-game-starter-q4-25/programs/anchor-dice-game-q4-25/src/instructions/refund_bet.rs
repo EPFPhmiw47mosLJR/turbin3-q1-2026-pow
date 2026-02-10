@@ -9,21 +9,26 @@ use crate::{errors::DiceError, state::Bet};
 pub struct RefundBet<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
+
     ///CHECK: This is safe
     pub house: UncheckedAccount<'info>,
+
     #[account(
         mut,
         seeds = [b"vault", house.key().as_ref()],
         bump
     )]
     pub vault: SystemAccount<'info>,
+
     #[account(
         mut,
+        has_one = player,
         close = player,
         seeds = [b"bet", vault.key().as_ref(), bet.seed.to_le_bytes().as_ref()],
         bump = bet.bump
     )]
     pub bet: Account<'info, Bet>,
+
     pub system_program: Program<'info, System>,
 }
 
