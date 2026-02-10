@@ -125,6 +125,13 @@ Tooling issues I ran into during the cohort.
     3. Run `anchor test`
     4. Profit!
 
+### Unsupported Program ID for Ed25519
+
+- I do not remember what command led me to this OR what issue I'm having
+- But it seems like surfpool doesn't have Ed25519 on-chain program
+- So I need to use `solana-test-validator -r` + `anchor test --skip-local-validator` to make the tests work
+- AND FOR SOME REASON THIS ISN'T DETERMINISTIC SO I GET A DIFFERENT RESULT EVERY SINGLE TIME
+
 ---
 
 ## Week 1
@@ -182,7 +189,7 @@ Tooling issues I ran into during the cohort.
 - **Rent is for data stored on chain**
 - Rent must be paid to create Accounts on-chain
 - Pay 2 years rent upfront for Rent-Exemption
-- - At the end of each Epoch, a GC runs which collects rent
+  - At the end of each Epoch, a GC runs which collects rent
 - Closing an Account allows rent to be reclaimed
 - Resizing an Account costs/returns the difference
 - Upgradeable programs require 4 years of rent upfront
@@ -199,17 +206,16 @@ Tooling issues I ran into during the cohort.
 #### Structure of Transaction
 
 - Multiple messages in a transaction
-
-```ts
-{
-    message: {
-        instructions: Array<instructions>,
-        recent_blockhash: number,
-        fee_payer: PublicKey
-    },
-    signers: Array<UInt8Array>
-}
-```
+    ```ts
+    {
+        message: {
+            instructions: Array<instructions>,
+            recent_blockhash: number,
+            fee_payer: PublicKey
+        },
+        signers: Array<UInt8Array>
+    }
+    ```
 
 ### Compute (Compute Units)
 
@@ -244,21 +250,37 @@ Tooling issues I ran into during the cohort.
 > - This is broken into units that dictate cost and control size.
 > - Speed of transaction and assurance of inclusion into a block are affected by this.
 
-> Solana intentionally decoupled:
+> **Solana intentionally decoupled:**
 >
-> - execution cost
-> - user fees
-> Basic Transaction Fee is 5000 lamports, it pays for signature verification + propagation + basic spam resistance.
-> Default compute limit is 200k, can be requested till 1.4mil.
-> This means 5000 lamports can be paid for a transaction with 200k CU and 1.4mil CU.
-> BUT:
-> - Validators choose transactions by *CU price* not *CU usage*
-> Compute Unit price (priority fees) is basically "I'll pay X micro-lamports per compute unit."
-> `compute_unit_price` is set in `micro-lamports per CU` (1 lamport = 1,000,000 micro-lamports)
-> So:
->   - A tx using 1.4M CU at price 0 *gets dropped*
->   - A tx using 200k CU with a non-zero CU price *gets included*
-> Validators maximize lamports per compute unit.
+> - Execution cost
+> - User fees
+>
+> - **Basic transaction fee:** 5,000 lamports  
+>   Pays for signature verification, propagation, and basic spam resistance.
+>
+> - **Default compute limit:** 200k CU  
+>   Can be requested up to 1.4M CU.
+>
+> - **Implication:**  
+>   The same 5,000 lamports can pay for a transaction using either:
+>   - 200k CU  
+>   - 1.4M CU
+>
+> - **But:**  
+>   Validators choose transactions by **CU price**, not CU usage.
+>
+> - **Compute Unit (CU) price / priority fees:**  
+>   “I’ll pay *X micro-lamports per compute unit*.”
+>
+> - `compute_unit_price` is set in **micro-lamports per CU**  
+>   (1 lamport = 1,000,000 micro-lamports)
+>
+> - **So in practice:**
+>   - A tx using **1.4M CU** at **price = 0** → *gets dropped*  
+>   - A tx using **200k CU** with a **non-zero CU price** → *gets included*
+>
+> - **Validator behavior:**  
+>   Validators maximize **lamports per compute unit**.
 
 ### PDA
 
@@ -801,6 +823,102 @@ pub this_program: Program<'info, AnchorMplxcoreQ425>,
 pub program_data: Account<'info, ProgramData>,
 ```
 
+## Week 4
+
+### Instruction Introspection
+
+- Allows you to look at other instructions in the same transaction you are executing
+- Developers wanted to verify stuff (particularly Ed25519 and SECP256K1)
+- These calls are *big* so can't necessarily be done in a single instruction
+- Example:
+    ```rust
+    pub fn verify_ed25519_signature(&mut self, sig: &Vec<u8>) -> Result<()> {
+        // Load a previous instruction from the same transaction
+        let ix = load_instruction_at_checked(0, &self.instruction_sysvar)
+            .map_err(|_| DiceError::Ed25519Program)?;
+
+        // Make sure this instruction was the native Ed25519 verifier
+        require_eq!(ix.program_id, ed25519_program::ID, DiceError::Ed25519Program);
+
+        // Ed25519 program should not take accounts
+        require_eq!(ix.accounts.len(), 0, DiceError::Ed25519Accounts);
+
+        // Parse the verified signatures out of the instruction data
+        let signatures = Ed25519InstructionSignatures::unpack(&ix.data)
+            .map_err(|_| DiceError::Ed25519Signature)?
+            .0;
+
+        // Expect exactly one signature
+        require_eq!(signatures.len(), 1, DiceError::Ed25519SignatureCount);
+
+        let signature = &signatures[0];
+
+        // Ensure the runtime actually verified this signature
+        require!(signature.is_verifiable, DiceError::Ed25519Header);
+
+        // Bind the signature to the expected signer (house)
+        require_keys_eq!(signature.public_key.ok_or(DiceError::Ed25519Pubkey)?, self.house.key(), DiceError::Ed25519Pubkey);
+
+        // Bind the signature bytes to what the client passed in
+        require!(signature.signature.ok_or(DiceError::Ed25519Signature)?.eq(&sig[..]), DiceError::Ed25519Signature);
+
+        // Bind the signed message to this specific bet
+        require!(signature.message.as_ref().ok_or(DiceError::Ed25519Signature)?.eq(&self.bet.to_slice()), DiceError::Ed25519Message);
+
+        Ok(())
+    }
+    ```
+
+### Governance (Governance, Voting & More)
+
+- Give power to the users
+
+#### Types
+
+1. Normal Voting
+    - One vote is one vote
+    - That is, buy one token and vote one vote
+    - Whales can mess balance
+    - Ex:
+        - [Realms (Radium)](https://realms.today/)
+        - [Align (Solana Labs)]()
+
+2. Quadratic Voting
+    - Each vote by same person increases in cost
+    - Ex.
+        - 1st Vote = 1 Token
+        - 2nd Vote = 4 Tokens
+        - 3rd Vote = 9 Tokens
+        - 4th Vote = 16 Tokens
+    - Ex:
+        - [Stockpile](https://stockpile.so/) - [GitHub](https://github.com/StockpileLabs)
+        - [Cubic](https://cubik.so/) -  [GitHub](https://github.com/cubik-so)
+
+3. Futarchy
+    - The community votes on the goal
+    - Markets predict which proposal best achieves the goal
+    - The proposal with the best predicted outcome wins
+    - Ex:
+        - [MetaDAO](https://www.metadao.fi/)
+
+##### Quadratic Voting
+
+- Formula: 
+    ```math
+    \begin{aligned}
+        V_i^p\left(
+            \left(
+                \sum_j \sqrt{c_j^p}
+            \right)^2
+        \right) - c_i^p
+    \end{aligned}
+    ```
+- Simpler formula:
+    ```math
+    \begin{aligned}
+        \frac{\text{credits}}{\text{vote}} = \sqrt{\text{tokens}}
+    \end{aligned}
+    ```
 
 <!-- MathJax loader for non-MatchJax supporting renderers. -->
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
