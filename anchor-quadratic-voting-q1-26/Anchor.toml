@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-anchor_quadratic_voting_q1_26 = "Buky6wJRWhpGPYRfsLPvXWDxU4VYi4XgiP1XeCnbdggg"
+anchor_quadratic_voting_q1_26 = "12LENMZThAX2VuFUH4EtD6c4uBa96Wm9V43e2yQ7yZdJ"
 
 [registry]
 url = "https://api.apr.dev"
